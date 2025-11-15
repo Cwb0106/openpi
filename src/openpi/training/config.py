@@ -20,6 +20,7 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.mshab_policy as mshab_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
@@ -353,6 +354,63 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
             model_transforms=model_transforms,
         )
 
+# ==================================================================
+# === 在这里粘贴下面的新类 ===
+# ==================================================================
+@dataclasses.dataclass(frozen=True)
+class LeRobotMshabDataConfig(DataConfigFactory):
+    """
+    用于 mshab_fetch 数据集的自定义数据配置。
+    复制自 LeRobotLiberoDataConfig，但修正了 repack_transform
+    以将 "task" (字符串) 映射到 "prompt"。
+    """
+
+    extra_delta_transform: bool = False
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        
+        # *** 这是关键的修改 ***
+        # 我们将 "task" 字段 (包含 "perform_task" 字符串)
+        # 重新打包到 "prompt" 字段。
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/image": "image",
+                        "observation/wrist_image": "wrist_image",
+                        "observation/state": "state",
+                        "actions": "actions",
+                        "prompt": "task",  # <<< 关键修复：将 "task" 字符串映射到 "prompt"
+                    }
+                )
+            ]
+        )
+
+        # (以下部分与 LeRobotLiberoDataConfig 相同)
+        # *** 这是第一个关键修改 ***
+        # 使用 mshab_policy (7+1 方案) 替换 libero_policy (6+1 方案)
+        data_transforms = _transforms.Group(
+            inputs=[mshab_policy.MshabInputs(model_type=model_config.model_type)],
+            outputs=[mshab_policy.MshabOutputs()],
+        )
+        
+        if self.extra_delta_transform:
+            # *** 这是第二个关键修改 ***
+            # Libero (6 关节) 使用 make_bool_mask(6, -1)
+            # 你的 mshab (7 关节) 需要 make_bool_mask(7, -1)
+            # 这将对你的 7-DoF 臂应用 delta 转换，同时保持夹爪（第8个动作）为绝对值
+            delta_action_mask = _transforms.make_bool_mask(7, -1)
+
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+
 
 @dataclasses.dataclass(frozen=True)
 class RLDSDroidDataConfig(DataConfigFactory):
@@ -499,7 +557,7 @@ class TrainConfig:
     # will increase memory and CPU usage.
     num_workers: int = 2
     # Number of train steps (batches) to run.
-    num_train_steps: int = 30_000
+    num_train_steps: int = 50_000
 
     # How often (in steps) to log training metrics.
     log_interval: int = 100
@@ -956,6 +1014,67 @@ _CONFIGS = [
         exp_name="debug_pi05",
         wandb_enabled=False,
     ),
+    # TrainConfig(
+    #         name="pi0_mshab_fetch",
+    #         model=pi0_config.Pi0Config(action_dim=16), 
+
+    #         # 1. 修改 data: 
+    #         #    将其从 LeRobotLiberoDataConfig 更改为 
+    #         #    我们刚刚创建的 LeRobotMshabDataConfig
+    #         data=LeRobotMshabDataConfig(  # <<< (修改点 1)
+                
+    #             repo_id="mshab_fetch_dataset", 
+
+    #             # 2. 修改 base_config:
+    #             #    将 prompt_from_task 设置为 False！
+    #             #    这将阻止数据加载器进行整数转换。
+    #             base_config=DataConfig(
+    #                 prompt_from_task=False, # <<< (修改点 2)
+    #             ),
+                
+    #             # 保持为 True (与 libero 相同)
+    #             extra_delta_transform=True,
+    #         ),
+    #         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+    #         num_train_steps=30_000,
+    #         # default_prompt="open the fridge",
+    #     ),
+    TrainConfig(
+            name="pi0_mshab_fetch",
+            model=pi0_config.Pi0Config(
+                action_dim=32,
+                action_horizon=5,
+                paligemma_variant="gemma_2b_lora",        #
+                action_expert_variant="gemma_300m_lora" #
+            ),
+            batch_size=128,
+            data=LeRobotMshabDataConfig(
+                repo_id="mshab_fetch_dataset", 
+                base_config=DataConfig(
+                    prompt_from_task=False,
+                ),
+                extra_delta_transform=True,
+
+                # 修正 1: 添加 AssetsConfig，指向你已有的统计文件
+                # 路径是全量微调的 assets 路径，这是正确的
+                assets=AssetsConfig(
+                    assets_dir="/raid/wenbo/project/openpi/assets/pi0_mshab_fetch",
+                    asset_id="mshab_fetch_dataset"
+                ),
+            ),
+
+            weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+            num_train_steps=100_000,
+
+            # 修正 2: 修复拼写错误 (freez_efilter -> freeze_filter)
+            freeze_filter=pi0_config.Pi0Config(
+                paligemma_variant="gemma_2b_lora",
+                action_expert_variant="gemma_300m_lora"
+            ).get_freeze_filter(), 
+
+            ema_decay=None, #
+        ),
+
     #
     # RoboArena configs.
     #

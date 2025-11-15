@@ -1,6 +1,5 @@
 import logging
 import math
-
 import torch
 from torch import Tensor
 from torch import nn
@@ -161,6 +160,7 @@ class PI0Pytorch(nn.Module):
     def _preprocess_observation(self, observation, *, train=True):
         """Helper method to preprocess observation."""
         observation = _preprocessing.preprocess_observation_pytorch(observation, train=train)
+
         return (
             list(observation.images.values()),
             list(observation.image_masks.values()),
@@ -246,7 +246,9 @@ class PI0Pytorch(nn.Module):
 
             # Embed state
             def state_proj_func(state):
+
                 return self.state_proj(state)
+
 
             state_emb = self._apply_checkpoint(state_proj_func, state)
 
@@ -324,6 +326,7 @@ class PI0Pytorch(nn.Module):
             time = self.sample_time(actions.shape[0], actions.device)
 
         time_expanded = time[:, None, None]
+
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 

@@ -4,7 +4,7 @@ This script is used to compute the normalization statistics for a given config. 
 will compute the mean and standard deviation of the data in the dataset and save it
 to the config assets directory.
 """
-
+import argparse
 import numpy as np
 import tqdm
 import tyro
@@ -113,5 +113,32 @@ def main(config_name: str, max_frames: int | None = None):
     normalize.save(output_path, norm_stats)
 
 
+# if __name__ == "__main__":
+#     tyro.cli(main)
+
 if __name__ == "__main__":
-    tyro.cli(main)
+    # [修改] 使用 argparse 替换 tyro.cli(main)
+    
+    # 1. 创建解析器
+    parser = argparse.ArgumentParser(description="Compute normalization statistics for a config.")
+    
+    # 2. 添加 config_name (必需的，位置参数)
+    parser.add_argument(
+        "config_name",
+        type=str,
+        help="The name of the config (e.g., 'pi0_libero') to compute stats for."
+    )
+    
+    # 3. 添加 max_frames (可选的，命名参数)
+    parser.add_argument(
+        "--max_frames",
+        type=int,
+        default=None,
+        help="Optional: Maximum number of frames to use for stats computation."
+    )
+    
+    # 4. 解析参数
+    args = parser.parse_args()
+    
+    # 5. 调用 main 函数
+    main(config_name=args.config_name, max_frames=args.max_frames)
